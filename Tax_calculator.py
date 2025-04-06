@@ -1,101 +1,150 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
+import yfinance as yf
+import matplotlib.pyplot as plt
+import seaborn as sns
+from xgboost import XGBRegressor
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_squared_error, r2_score
+import base64
+import io
 
-# Page Configuration
-st.set_page_config(page_title="Income Tax Calculator", layout="centered")
+st.set_page_config(page_title="AI-Powered Stock Portfolio Optimizer", layout="wide")
+st.title("📊 AI-Powered Stock Portfolio Optimizer")
 
-# Custom Styling
-st.markdown(
-    """
-    <style>
-        .stApp {background-color: #f5f5f5;}
-        .title {color: #00274d; font-size: 35px; font-weight: bold;}
-        .metric-label {font-size: 18px; font-weight: bold; color: #333;}
-        .metric-value {font-size: 22px; font-weight: bold; color: #00274d;}
-        .dataframe {font-size: 16px;}
-    </style>
-    """,
-    unsafe_allow_html=True
-)
+# Sidebar inputs
+country = st.sidebar.selectbox("Market", ["India", "America"])
+stocks = st.sidebar.text_input("Enter Stock Symbols (comma-separated)", "BPCL, RITES")
+years = st.sidebar.slider("Years of Historical Data", 1, 10, 3)
+forecast_days = st.sidebar.slider("Forecast Period (Days)", 30, 365, 90)
+investment = st.sidebar.number_input("Total Investment (₹)", value=50000.0)
+risk_profile = st.sidebar.selectbox("Risk Profile", ["Low", "Medium", "High"])
 
-# Display Tax Summary with an Attractive Title
-st.markdown(
-    """
-    <h2 style="text-align:center; color:#00274d; font-size:40px; font-weight:bold;">
-        💰 Income Tax Calculator: Your Personalized Tax Summary 📊
-    </h2>
-    <hr style="border: 2px solid #00274d;">
-    """,
-    unsafe_allow_html=True
-)
+risk_map = {"Low": 1, "Medium": 2, "High": 3}
+risk_level = risk_map[risk_profile]
 
-# Sidebar Inputs
-st.sidebar.header("Enter Your Details")
-income = st.sidebar.number_input("Enter Annual Income (₹)", min_value=0, value=1000000, step=50000)
-hra_received = st.sidebar.number_input("Enter HRA Received (₹)", min_value=0, value=200000, step=5000)
-rent_paid = st.sidebar.number_input("Enter Rent Paid (₹)", min_value=0, value=150000, step=5000)
-basic_salary = st.sidebar.number_input("Enter Basic Salary (₹)", min_value=0, value=500000, step=50000)
-is_metro = st.sidebar.checkbox("Do you live in a Metro City?", value=False)
+# Convert and clean stock symbols
+stock_list = [s.strip().upper() + ".NS" if country == "India" else s.strip().upper() for s in stocks.split(",")]
 
-# Deduction Inputs
-deductions_80C = st.sidebar.number_input("Enter Section 80C Deductions (₹)", min_value=0, value=150000, step=50000)
-deductions_other = st.sidebar.number_input("Enter Other Deductions (₹)", min_value=0, value=50000, step=50000)
+forecasted_prices = {}
+volatilities = {}
+trend_signals = {}
+rf_forecasts = {}
+xgb_forecasts = {}
+actual_vs_predicted = {}
 
-# Senior Citizen Checkbox
-is_senior = st.sidebar.checkbox("Are you a Senior Citizen? (60+ years)", value=False)
+for stock in stock_list:
+    df = yf.download(stock, period=f"{years}y", interval="1d", auto_adjust=True)
+    if df.empty:
+        st.warning(f"Skipping {stock} due to lack of data.")
+        continue
 
-# Interest Income Inputs
-savings_interest = st.sidebar.number_input("Savings Account Interest (₹)", min_value=0, value=5000, step=500)
-fd_interest = st.sidebar.number_input("Fixed Deposit Interest (₹)", min_value=0, value=10000, step=500)
+    df = df[['Close']].dropna()
+    df['MA_50'] = df['Close'].rolling(window=50).mean()
+    df['MA_200'] = df['Close'].rolling(window=200).mean()
+    trend_signals[stock] = "Bullish 🟢 (Buy)" if df['MA_50'].iloc[-1] > df['MA_200'].iloc[-1] else "Bearish 🔴 (Sell)"
 
-# HRA Exemption Calculation
-hra_50_40 = 0.5 * basic_salary if is_metro else 0.4 * basic_salary
-hra_actual = hra_received
-hra_rent_based = rent_paid - (0.1 * basic_salary)
-hra_exemption = max(min(hra_actual, hra_50_40, hra_rent_based), 0)
+    df['Lag_1'] = df['Close'].shift(1)
+    df.dropna(inplace=True)
 
-# Deduction Calculation (80TTA / 80TTB)
-if is_senior:
-    interest_deduction = min(savings_interest + fd_interest, 25000)  # 80TTB for Senior Citizens
-    deduction_label = "80TTB Deduction (Senior Citizen)"
-else:
-    interest_deduction = min(savings_interest, 10000)  # 80TTA for Non-Seniors (Only Savings Interest)
-    deduction_label = "80TTA Deduction (Non-Senior)"
+    train_size = int(len(df) * 0.8)
+    train, test = df.iloc[:train_size], df.iloc[train_size:]
 
-# Total Deductions
-total_deductions = deductions_80C + deductions_other + interest_deduction + hra_exemption
+    # Models
+    xgb_model = XGBRegressor(objective='reg:squarederror', n_estimators=100)
+    xgb_model.fit(train[['Lag_1']], train['Close'])
+    xgb_pred = xgb_model.predict(test[['Lag_1']])
+    future_xgb = [xgb_model.predict([[df['Lag_1'].iloc[-1]]])[0] for _ in range(forecast_days)]
 
-# Taxable Income Calculation
-taxable_income = max(income - total_deductions, 0)
+    rf_model = RandomForestRegressor(n_estimators=100)
+    rf_model.fit(train[['Lag_1']], train['Close'])
+    rf_pred = rf_model.predict(test[['Lag_1']])
+    future_rf = [rf_model.predict([[df['Lag_1'].iloc[-1]]])[0] for _ in range(forecast_days)]
 
-# Tax Calculation (Example: Flat 25% Tax Rate)
-tax = taxable_income * 0.25  
-cess = tax * 0.04  # 4% Cess
-total_tax = tax + cess
+    # Store
+    xgb_forecasts[stock] = xgb_pred[-1]
+    rf_forecasts[stock] = rf_pred[-1]
+    volatilities[stock] = float(np.std(df['Close'].pct_change().dropna()))
+    forecasted_prices[stock] = {'XGBoost': future_xgb[-1], 'RandomForest': future_rf[-1]}
+    actual_vs_predicted[stock] = (test['Close'], xgb_pred, rf_pred)
 
-# Tax Paid Percentage
-tax_paid_percentage = (total_tax / income) * 100 if income > 0 else 0
+    # Chart
+    future_dates = pd.date_range(df.index[-1], periods=forecast_days+1, freq='B')[1:]
+    plt.figure(figsize=(12, 6))
+    plt.plot(df['Close'], label="Historical", color='black')
+    plt.plot(df['MA_50'], label="50-Day MA", linestyle='--', color='blue')
+    plt.plot(df['MA_200'], label="200-Day MA", linestyle='--', color='purple')
+    plt.plot(future_dates, future_xgb, label="XGBoost Forecast", linestyle='--', color='red')
+    plt.plot(future_dates, future_rf, label="RF Forecast", linestyle='--', color='green')
+    plt.legend()
+    plt.title(f"{stock} Price Forecast with MAs")
+    st.pyplot(plt.gcf())
+    plt.close()
 
-# Display Tax Summary
-st.markdown('<p class="title">📊 Tax Calculation Summary</p>', unsafe_allow_html=True)
+# Allocation logic
+risky_stocks = [s for s in volatilities if volatilities[s] > 0.03]
+safe_stocks = [s for s in volatilities if s not in risky_stocks]
+risk_alloc_pct = {1: 0.7, 2: 0.5, 3: 0.3}[risk_level]
 
-col1, col2, col3 = st.columns(3)
-col1.metric(label="💵 Gross Income (₹)", value=f"{income:,.0f}")
-col2.metric(label="📉 Taxable Income (₹)", value=f"{taxable_income:,.0f}")
-col3.metric(label="💰 Total Tax (₹)", value=f"{total_tax:,.0f}")
+risky_amt = investment * risk_alloc_pct
+safe_amt = investment - risky_amt
+allocation = {}
 
-# Tax Breakdown Table
-data = {
-    "Category": [
-        "Annual Income", "HRA Exemption", "80C Deductions", "Other Deductions", deduction_label, "Total Deductions",
-        "Taxable Income", "Tax (Before Cess)", "4% Cess", "Total Tax Payable", "Tax Paid (%)"
-    ],
-    "Amount (₹)": [
-        f"{income:,.0f}", f"{hra_exemption:,.0f}", f"{deductions_80C:,.0f}", f"{deductions_other:,.0f}", f"{interest_deduction:,.0f}", f"{total_deductions:,.0f}",
-        f"{taxable_income:,.0f}", f"{tax:,.0f}", f"{cess:,.0f}", f"{total_tax:,.0f}", f"{tax_paid_percentage:.2f}"
-    ],
-}
-df = pd.DataFrame(data)
+if risky_stocks:
+    for s in risky_stocks:
+        allocation[s] = risky_amt / len(risky_stocks)
+if safe_stocks:
+    for s in safe_stocks:
+        allocation[s] = safe_amt / len(safe_stocks)
 
-st.subheader("📋 Tax Breakdown")
-st.dataframe(df.style.set_properties(**{'font-size': '18px'}))
+total_alloc = sum(allocation.values())
+alloc_percent = {s: round((amt / total_alloc) * 100, 4) for s, amt in allocation.items()}
+
+# Display
+st.subheader("💰 Optimized Stock Allocation (100% Distributed)")
+alloc_df = pd.DataFrame.from_dict(allocation, orient='index', columns=['Investment Amount (₹)'])
+alloc_df['Percentage Allocation (%)'] = alloc_df.index.map(lambda s: alloc_percent[s])
+st.dataframe(alloc_df)
+
+st.subheader("📢 AI Trend Predictions")
+trend_df = pd.DataFrame.from_dict(trend_signals, orient='index', columns=['Trend Signal'])
+st.dataframe(trend_df)
+
+st.subheader("🧠 Forecasted Prices (Last Prediction)")
+forecast_df = pd.DataFrame.from_dict(forecasted_prices, orient='index')
+st.dataframe(forecast_df)
+
+# Sharpe Ratio & Risk Level
+st.subheader("⚠️ Risk Levels in Investment")
+risk_tiers = {s: "3 (High Risk)" if vol > 0.03 else "2 (Medium Risk)" if vol > 0.01 else "1 (Low Risk)" for s, vol in volatilities.items()}
+risk_df = pd.DataFrame.from_dict(risk_tiers, orient='index', columns=['Risk Level'])
+st.dataframe(risk_df)
+
+# Backtest Chart
+st.subheader("📆 Backtest: Actual vs Predicted")
+for stock in actual_vs_predicted:
+    actual, xgb_pred, rf_pred = actual_vs_predicted[stock]
+    plt.figure(figsize=(10, 5))
+    plt.plot(actual.index, actual, label='Actual', color='black')
+    plt.plot(actual.index, xgb_pred, label='XGBoost', color='red')
+    plt.plot(actual.index, rf_pred, label='Random Forest', color='green')
+    plt.title(f"{stock} - Backtest Forecast Accuracy")
+    plt.legend()
+    st.pyplot(plt.gcf())
+    plt.close()
+
+# Sharpe Ratio
+st.subheader("📉 Sharpe Ratio & Return Forecast")
+sharpe_rows = []
+risk_free_rate = 0.05
+for stock in stock_list:
+    df = yf.download(stock, period=f"{years}y", interval="1d", auto_adjust=True)
+    df['Returns'] = df['Close'].pct_change()
+    annual_return = df['Returns'].mean() * 252
+    annual_volatility = df['Returns'].std() * np.sqrt(252)
+    sharpe = (annual_return - risk_free_rate) / annual_volatility
+    sharpe_rows.append([stock, round(annual_return, 4), round(annual_volatility, 4), round(sharpe, 4)])
+
+sharpe_df = pd.DataFrame(sharpe_rows, columns=['Stock', 'Annual Return', 'Annual Volatility', 'Sharpe Ratio'])
+st.dataframe(sharpe_df.set_index('Stock'))
