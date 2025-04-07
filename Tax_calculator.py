@@ -5,6 +5,8 @@ import yfinance as yf
 import matplotlib.pyplot as plt
 from xgboost import XGBRegressor
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_squared_error
+from scipy.stats import norm
 
 # Page config
 st.set_page_config(page_title="AI-Powered Stock Portfolio Optimizer", layout="wide")
@@ -38,6 +40,10 @@ trend_signals = {}
 xgb_forecasts = {}
 rf_forecasts = {}
 actual_vs_predicted = {}
+sharpe_ratios = {}
+returns = {}
+fair_values = {}
+risk_free_rate = 0.04  # Assumed constant for Sharpe Ratio calculation
 
 # Forecasting loop
 for stock in stock_list:
@@ -68,6 +74,20 @@ for stock in stock_list:
     rf_model.fit(train[['Lag_1']], train['Close'])
     rf_pred = rf_model.predict(test[['Lag_1']])
     future_rf = [rf_model.predict([[df['Lag_1'].iloc[-1]]])[0] for _ in range(forecast_days)]
+
+    # Returns & Sharpe Ratio
+    daily_returns = df['Close'].pct_change().dropna()
+    avg_return = np.mean(daily_returns) * 252
+    volatility = np.std(daily_returns) * np.sqrt(252)
+    sharpe_ratio = (avg_return - risk_free_rate) / volatility if volatility > 0 else 0
+    sharpe_ratios[stock] = sharpe_ratio
+    returns[stock] = avg_return
+
+    # Fair Value Estimation using Forward PE (assume PE = 15)
+    last_eps = df['Close'].iloc[-1] / 15
+    projected_eps = last_eps * (1 + avg_return)
+    fair_value = projected_eps * 15
+    fair_values[stock] = fair_value
 
     # Store outputs
     xgb_forecasts[stock] = xgb_pred[-1]
@@ -112,3 +132,14 @@ for stock in actual_vs_predicted:
     plt.legend()
     st.pyplot(plt.gcf())
     plt.close()
+
+st.subheader("📊 Risk & Return Metrics")
+rr_df = pd.DataFrame({
+    "Expected Annual Return": returns,
+    "Sharpe Ratio": sharpe_ratios
+})
+st.dataframe(rr_df.style.format("{:.2f}"))
+
+st.subheader("💸 Fair Value Estimate")
+fair_df = pd.DataFrame.from_dict(fair_values, orient='index', columns=["Estimated Fair Value"])
+st.dataframe(fair_df.style.format("{:.2f}"))
