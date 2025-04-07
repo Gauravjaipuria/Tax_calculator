@@ -43,6 +43,7 @@ actual_vs_predicted = {}
 sharpe_ratios = {}
 returns = {}
 fair_values = {}
+expected_price_growths = {}
 risk_free_rate = 0.04  # Assumed constant for Sharpe Ratio calculation
 
 # Forecasting loop
@@ -88,6 +89,12 @@ for stock in stock_list:
     projected_eps = last_eps * (1 + avg_return)
     fair_value = projected_eps * 15
     fair_values[stock] = fair_value
+
+    # Forecasted Growth
+    latest_price = df['Close'].iloc[-1]
+    xgb_forecast_price = future_xgb[-1]
+    expected_growth = ((xgb_forecast_price - latest_price) / latest_price) * 100
+    expected_price_growths[stock] = expected_growth
 
     # Store outputs
     xgb_forecasts[stock] = xgb_pred[-1]
@@ -143,3 +150,7 @@ st.dataframe(rr_df.style.format("{:.2f}"))
 st.subheader("💸 Fair Value Estimate")
 fair_df = pd.DataFrame.from_dict(fair_values, orient='index', columns=["Estimated Fair Value"])
 st.dataframe(fair_df.style.format("{:.2f}"))
+
+st.subheader("📈 Forecasted Price Growth (%)")
+growth_df = pd.DataFrame.from_dict(expected_price_growths, orient='index', columns=["Forecasted Growth % (XGBoost)"])
+st.dataframe(growth_df.style.format("{:.2f}"))
