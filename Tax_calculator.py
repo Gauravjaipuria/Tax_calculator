@@ -154,3 +154,4 @@ st.dataframe(fair_df.style.format("{:.2f}"))
 st.subheader("📈 Forecasted Price Growth (%)")
 growth_df = pd.DataFrame.from_dict(expected_price_growths, orient='index', columns=["Forecasted Growth % (XGBoost)"])
 st.dataframe(growth_df.style.format("{:.2f}"))
+
