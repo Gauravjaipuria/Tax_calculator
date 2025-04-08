@@ -5,14 +5,12 @@ import yfinance as yf
 import matplotlib.pyplot as plt
 from xgboost import XGBRegressor
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import mean_squared_error
-from scipy.stats import norm
 
-# Set Streamlit page configuration
+# Page configuration
 st.set_page_config(page_title="AI-Powered Stock Portfolio Optimizer", layout="wide")
 st.title("📈 AI-Powered Stock Portfolio Optimizer")
 
-# Sidebar configuration
+# Sidebar inputs
 st.sidebar.header("🔧 Configuration")
 mode = st.sidebar.selectbox("Select Asset Type", ["Stock", "Index"])
 years = st.sidebar.slider("Historical Data (Years)", 1, 10, 3)
@@ -34,7 +32,7 @@ else:
     index_name = st.sidebar.selectbox("Select Index", list(index_map.keys()))
     stock_list = [index_map[index_name]]
 
-# Initialize containers
+# Initialize output containers
 forecasted_prices = {}
 trend_signals = {}
 xgb_forecasts = {}
@@ -44,10 +42,14 @@ sharpe_ratios = {}
 returns = {}
 fair_values = {}
 expected_price_growths = {}
+risk_levels = {}
+
 RISK_FREE_RATE = 0.04
 
-# Forecasting and analytics
+# Processing loop
 for stock in stock_list:
+    st.markdown(f"## Analysis for: {'Index' if mode == 'Index' else 'Stock'} - `{stock}`")
+
     df = yf.download(stock, period=f"{years}y", interval="1d", auto_adjust=True)
     if df.empty:
         st.warning(f"⚠️ No data available for {stock}. Skipping.")
@@ -56,48 +58,55 @@ for stock in stock_list:
     df = df[['Close']].dropna()
     df['MA_50'] = df['Close'].rolling(window=50).mean()
     df['MA_200'] = df['Close'].rolling(window=200).mean()
-
     trend_signals[stock] = "🟢 Bullish (Buy)" if df['MA_50'].iloc[-1] > df['MA_200'].iloc[-1] else "🔴 Bearish (Sell)"
 
+    # Lag feature
     df['Lag_1'] = df['Close'].shift(1)
     df.dropna(inplace=True)
 
+    # Train/test split
     train_size = int(len(df) * 0.8)
     train, test = df.iloc[:train_size], df.iloc[train_size:]
 
-    # Train XGBoost
+    # XGBoost Model
     xgb_model = XGBRegressor(objective='reg:squarederror', n_estimators=100)
     xgb_model.fit(train[['Lag_1']], train['Close'])
     xgb_pred = xgb_model.predict(test[['Lag_1']])
     future_xgb = [xgb_model.predict([[df['Lag_1'].iloc[-1]]])[0] for _ in range(forecast_days)]
 
-    # Train Random Forest
+    # Random Forest Model
     rf_model = RandomForestRegressor(n_estimators=100)
     rf_model.fit(train[['Lag_1']], train['Close'])
     rf_pred = rf_model.predict(test[['Lag_1']])
     future_rf = [rf_model.predict([[df['Lag_1'].iloc[-1]]])[0] for _ in range(forecast_days)]
 
-    # Return & Risk
+    # Risk/Return
     daily_returns = df['Close'].pct_change().dropna()
     avg_return = np.mean(daily_returns) * 252
     volatility = np.std(daily_returns) * np.sqrt(252)
     sharpe_ratio = (avg_return - RISK_FREE_RATE) / volatility if volatility > 0 else 0
+    risk_level = "Low" if volatility < 0.15 else "Medium" if volatility < 0.3 else "High"
 
+    # Store metrics
     sharpe_ratios[stock] = sharpe_ratio
     returns[stock] = avg_return
+    risk_levels[stock] = risk_level
 
-    # Fair Value Estimation
-    last_eps = df['Close'].iloc[-1] / 15
-    projected_eps = last_eps * (1 + avg_return)
-    fair_values[stock] = projected_eps * 15
+    # Fair Value Estimate (only for stocks)
+    if mode == "Stock":
+        last_eps = df['Close'].iloc[-1] / 15
+        projected_eps = last_eps * (1 + avg_return)
+        fair_values[stock] = projected_eps * 15
+    else:
+        fair_values[stock] = np.nan
 
-    # Expected Growth
+    # Growth Estimate
     latest_price = df['Close'].iloc[-1]
     xgb_forecast_price = future_xgb[-1]
     expected_growth = ((xgb_forecast_price - latest_price) / latest_price) * 100
     expected_price_growths[stock] = expected_growth
 
-    # Store outputs
+    # Store forecasts
     xgb_forecasts[stock] = xgb_pred[-1]
     rf_forecasts[stock] = rf_pred[-1]
     forecasted_prices[stock] = {'XGBoost': future_xgb[-1], 'RandomForest': future_rf[-1]}
@@ -118,7 +127,7 @@ for stock in stock_list:
     st.pyplot(plt.gcf())
     plt.close()
 
-# Results Display
+# Final outputs
 st.subheader("🔮 Forecasted Prices")
 st.dataframe(pd.DataFrame.from_dict(forecasted_prices, orient='index').style.format("{:.2f}"))
 
@@ -128,6 +137,7 @@ st.dataframe(pd.DataFrame.from_dict(trend_signals, orient='index', columns=['Tre
 st.subheader("📊 Risk & Return Metrics")
 rr_df = pd.DataFrame({
     "Expected Annual Return": returns,
+    "Volatility Risk Level": risk_levels,
     "Sharpe Ratio": sharpe_ratios
 })
 st.dataframe(rr_df.style.format("{:.2f}"))
