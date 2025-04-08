@@ -125,19 +125,6 @@ st.dataframe(pd.DataFrame.from_dict(forecasted_prices, orient='index').style.for
 st.subheader("📈 AI Trend Signals")
 st.dataframe(pd.DataFrame.from_dict(trend_signals, orient='index', columns=['Trend Signal']))
 
-st.subheader("📉 Backtest: Actual vs Predicted")
-for stock, (actual, xgb_pred, rf_pred) in actual_vs_predicted.items():
-    plt.figure(figsize=(10, 5))
-    plt.plot(actual.index, actual, label='Actual', color='black')
-    plt.plot(actual.index, xgb_pred, label='XGBoost', color='red')
-    plt.plot(actual.index, rf_pred, label='Random Forest', color='green')
-    plt.title(f"{stock} - Backtest Performance")
-    plt.xlabel("Date")
-    plt.ylabel("Price")
-    plt.legend()
-    st.pyplot(plt.gcf())
-    plt.close()
-
 st.subheader("📊 Risk & Return Metrics")
 rr_df = pd.DataFrame({
     "Expected Annual Return": returns,
