@@ -159,10 +159,11 @@ risk_classification_df = pd.DataFrame({
 })
 st.dataframe(risk_classification_df)
 
-# Allocation
 st.subheader("💸 Portfolio Allocation Based on Risk")
+
 allocation = {}
 
+# If all stocks fall under one risk category, allocate full investment there
 if len(low_risk) == len(volatilities):
     per_stock = investment / len(low_risk)
     for stock in low_risk:
@@ -192,7 +193,7 @@ else:
         per_safe_stock = safe_allocation / len(safe_stocks)
         for stock in safe_stocks:
             allocation[stock] = per_safe_stock
-
+            
 # Display Allocation
 total_allocation = sum(allocation.values())
 alloc_percent = {stock: round((amount / total_allocation) * 100, 2) for stock, amount in allocation.items()}
