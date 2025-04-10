@@ -8,7 +8,7 @@ from sklearn.ensemble import RandomForestRegressor
 from ta.momentum import RSIIndicator
 
 st.set_page_config(page_title="AI-Powered Stock Portfolio Optimizer", layout="wide")
-st.title("\U0001F4CA AI-Powered Stock Portfolio Optimizer")
+st.title("📊 AI-Powered Stock Portfolio Optimizer")
 
 # Sidebar inputs
 country = st.sidebar.selectbox("Market", ["India", "other"])
@@ -32,7 +32,6 @@ trend_signals = {}
 rf_forecasts = {}
 xgb_forecasts = {}
 actual_vs_predicted = {}
-rsi_signals = {}
 
 # Process each stock
 for stock in stock_list:
@@ -42,19 +41,6 @@ for stock in stock_list:
         continue
 
     df = df[['Close']].dropna()
-
-    # RSI Calculation
-    rsi = RSIIndicator(close=df['Close'].squeeze(), window=14).rsi()
-    df['RSI'] = rsi_indicator.rsi()
-    last_rsi = df['RSI'].iloc[-1]
-    if last_rsi < 30:
-        rsi_signal = "Oversold (Bullish)"
-    elif last_rsi > 70:
-        rsi_signal = "Overbought (Bearish)"
-    else:
-        rsi_signal = "Neutral"
-    rsi_signals[stock] = f"{round(last_rsi, 2)} - {rsi_signal}"
-
     df['MA_50'] = df['Close'].rolling(window=50).mean()
     df['MA_200'] = df['Close'].rolling(window=200).mean()
     trend_signals[stock] = "Bullish (Buy)" if df['MA_50'].iloc[-1] > df['MA_200'].iloc[-1] else "Bearish (Sell)"
@@ -96,6 +82,31 @@ for stock in stock_list:
     st.pyplot(plt.gcf())
     plt.close()
 
+# RSI Analysis
+st.subheader("📈 RSI Analysis (Relative Strength Index)")
+rsi_signals = []
+for stock in stock_list:
+    df_rsi = yf.download(stock, period=f"{years}y", interval="1d", auto_adjust=True)
+    close_series = df_rsi['Close']
+    rsi = RSIIndicator(close=close_series, window=14).rsi()
+    latest_rsi = rsi.iloc[-1]
+
+    if latest_rsi < 30:
+        signal = "Oversold (Buy)"
+    elif latest_rsi > 70:
+        signal = "Overbought (Sell)"
+    else:
+        signal = "Neutral"
+
+    rsi_signals.append({
+        "Stock": stock,
+        "RSI": round(latest_rsi, 2),
+        "Signal": signal
+    })
+
+rsi_df = pd.DataFrame(rsi_signals)
+st.dataframe(rsi_df)
+
 # Classify risk levels
 low_risk = []
 medium_risk = []
@@ -109,18 +120,17 @@ for stock, vol in volatilities.items():
     else:
         high_risk.append(stock)
 
-st.subheader("\U0001F50D Stock Risk Classification")
+st.subheader("🔍 Stock Risk Classification")
 risk_classification_df = pd.DataFrame({
     "Stock": low_risk + medium_risk + high_risk,
     "Risk Category": (["Low"] * len(low_risk)) + (["Medium"] * len(medium_risk)) + (["High"] * len(high_risk))
 })
 st.dataframe(risk_classification_df)
 
-st.subheader("\U0001F4B8 Portfolio Allocation Based on Risk")
+st.subheader("💸 Portfolio Allocation Based on Risk")
 
 allocation = {}
 
-# If all stocks fall under one risk category, allocate full investment there
 if len(low_risk) == len(volatilities):
     per_stock = investment / len(low_risk)
     for stock in low_risk:
@@ -156,13 +166,13 @@ total_allocation = sum(allocation.values())
 alloc_percent = {stock: round((amount / total_allocation) * 100, 2) for stock, amount in allocation.items()}
 
 # Display Allocation
-st.subheader("\U0001F4B0 Optimized Stock Allocation (100% Distributed)")
+st.subheader("💰 Optimized Stock Allocation (100% Distributed)")
 alloc_df = pd.DataFrame.from_dict(allocation, orient='index', columns=['Investment Amount (₹)'])
 alloc_df['Percentage Allocation (%)'] = alloc_df.index.map(lambda s: alloc_percent[s])
 st.dataframe(alloc_df)
 
 # Trend Signals
-st.subheader("\U0001F4E2 AI Trend Predictions")
+st.subheader("📢 AI Trend Predictions")
 trend_df = pd.DataFrame.from_dict(trend_signals, orient='index', columns=['Trend Signal'])
 st.dataframe(trend_df)
 
@@ -177,13 +187,8 @@ risk_tiers = {s: "3 (High Risk)" if vol > 0.03 else "2 (Medium Risk)" if vol > 0
 risk_df = pd.DataFrame.from_dict(risk_tiers, orient='index', columns=['Risk Level'])
 st.dataframe(risk_df)
 
-# RSI Table
-st.subheader("\U0001F4C8 RSI Indicator (Last Value)")
-rsi_df = pd.DataFrame.from_dict(rsi_signals, orient='index', columns=['RSI Signal'])
-st.dataframe(rsi_df)
-
 # Sharpe Ratio & Returns
-st.subheader("\U0001F4C9 Sharpe Ratio & Return Forecast")
+st.subheader("📉 Sharpe Ratio & Return Forecast")
 sharpe_rows = []
 risk_free_rate = 0.05
 for stock in stock_list:
