@@ -87,8 +87,11 @@ st.subheader("📈 RSI Analysis (Relative Strength Index)")
 rsi_signals = []
 for stock in stock_list:
     df_rsi = yf.download(stock, period=f"{years}y", interval="1d", auto_adjust=True)
-    close_series = df_rsi['Close']
+    close_series = df_rsi['Close'].squeeze()
+    if isinstance(close_series, pd.DataFrame):
+        close_series = close_series.iloc[:, 0]
     rsi = RSIIndicator(close=close_series, window=14).rsi()
+
     latest_rsi = rsi.iloc[-1]
 
     if latest_rsi < 30:
