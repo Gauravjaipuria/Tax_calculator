@@ -44,7 +44,7 @@ for stock in stock_list:
     df = df[['Close']].dropna()
 
     # RSI Calculation
-    rsi_indicator = RSIIndicator(close=df['Close'], window=14)
+    rsi = RSIIndicator(close=df['Close'].squeeze(), window=14).rsi()
     df['RSI'] = rsi_indicator.rsi()
     last_rsi = df['RSI'].iloc[-1]
     if last_rsi < 30:
