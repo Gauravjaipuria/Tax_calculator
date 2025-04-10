@@ -5,63 +5,59 @@ import yfinance as yf
 import matplotlib.pyplot as plt
 from xgboost import XGBRegressor
 from sklearn.ensemble import RandomForestRegressor
+from ta.momentum import RSIIndicator
 
-# Page configuration
 st.set_page_config(page_title="AI-Powered Stock Portfolio Optimizer", layout="wide")
-st.title("📈 AI-Powered Stock Portfolio Optimizer")
+st.title("\U0001F4CA AI-Powered Stock Portfolio Optimizer")
 
 # Sidebar inputs
-st.sidebar.header("🔧 Configuration")
-mode = st.sidebar.selectbox("Select Asset Type", ["Stock", "Index"])
-years = st.sidebar.slider("Historical Data (Years)", 1, 10, 3)
-forecast_days = st.sidebar.slider("Forecast Horizon (Days)", 30, 365, 90)
-investment = st.sidebar.number_input("💰 Investment Amount (INR)", value=100000.0, step=1000.0)
-risk_level = st.sidebar.selectbox("🎯 Your Risk Appetite", [1, 2, 3], format_func=lambda x: ["Low", "Medium", "High"][x - 1])
+country = st.sidebar.selectbox("Market", ["India", "other"])
+stocks = st.sidebar.text_input("Enter Stock Symbols (comma-separated)", "BPCL, RITES")
+years = st.sidebar.slider("Years of Historical Data", 1, 10, 3)
+forecast_days = st.sidebar.slider("Forecast Period (Days)", 30, 365, 90)
+investment = st.sidebar.number_input("Total Investment (₹)", value=50000.0)
+risk_profile = st.sidebar.selectbox("Risk Profile", ["Low", "Medium", "High"])
 
-# Ticker input
-if mode == "Stock":
-    stocks_input = st.sidebar.text_input("Enter Stock Symbols (comma-separated)", "BPCL, RITES")
-    market = st.sidebar.selectbox("Select Market", ["India", "America"])
-    stock_list = [f"{symbol.strip().upper()}.NS" if market == "India" else symbol.strip().upper() for symbol in stocks_input.split(",")]
-else:
-    index_map = {
-        "Sensex": "^BSESN",
-        "Nifty 50": "^NSEI",
-        "S&P 500": "^GSPC",
-        "Nasdaq": "^IXIC",
-        "Dow Jones": "^DJI",
-        "FTSE 100": "^FTSE"
-    }
-    index_name = st.sidebar.selectbox("Select Index", list(index_map.keys()))
-    stock_list = [index_map[index_name]]
+# Risk level mapping
+risk_map = {"Low": 1, "Medium": 2, "High": 3}
+risk_level = risk_map[risk_profile]
 
-# Containers
+# Prepare stock list
+stock_list = [s.strip().upper() + ".NS" if country == "India" else s.strip().upper() for s in stocks.split(",")]
+
+# Initialize containers
 forecasted_prices = {}
-trend_signals = {}
-xgb_forecasts = {}
-rf_forecasts = {}
-actual_vs_predicted = {}
-sharpe_ratios = {}
-returns = {}
-fair_values = {}
-expected_price_growths = {}
-risk_levels = {}
 volatilities = {}
+trend_signals = {}
+rf_forecasts = {}
+xgb_forecasts = {}
+actual_vs_predicted = {}
+rsi_signals = {}
 
-RISK_FREE_RATE = 0.04
-
+# Process each stock
 for stock in stock_list:
-    st.markdown(f"## Analysis for: {'Index' if mode == 'Index' else 'Stock'} - `{stock}`")
-
     df = yf.download(stock, period=f"{years}y", interval="1d", auto_adjust=True)
     if df.empty:
-        st.warning(f"⚠️ No data available for {stock}. Skipping.")
+        st.warning(f"Skipping {stock} due to lack of data.")
         continue
 
     df = df[['Close']].dropna()
+
+    # RSI Calculation
+    rsi_indicator = RSIIndicator(close=df['Close'], window=14)
+    df['RSI'] = rsi_indicator.rsi()
+    last_rsi = df['RSI'].iloc[-1]
+    if last_rsi < 30:
+        rsi_signal = "Oversold (Bullish)"
+    elif last_rsi > 70:
+        rsi_signal = "Overbought (Bearish)"
+    else:
+        rsi_signal = "Neutral"
+    rsi_signals[stock] = f"{round(last_rsi, 2)} - {rsi_signal}"
+
     df['MA_50'] = df['Close'].rolling(window=50).mean()
     df['MA_200'] = df['Close'].rolling(window=200).mean()
-    trend_signals[stock] = "🟢 Bullish (Buy)" if df['MA_50'].iloc[-1] > df['MA_200'].iloc[-1] else "🔴 Bearish (Sell)"
+    trend_signals[stock] = "Bullish (Buy)" if df['MA_50'].iloc[-1] > df['MA_200'].iloc[-1] else "Bearish (Sell)"
 
     df['Lag_1'] = df['Close'].shift(1)
     df.dropna(inplace=True)
@@ -69,6 +65,7 @@ for stock in stock_list:
     train_size = int(len(df) * 0.8)
     train, test = df.iloc[:train_size], df.iloc[train_size:]
 
+    # Models
     xgb_model = XGBRegressor(objective='reg:squarederror', n_estimators=100)
     xgb_model.fit(train[['Lag_1']], train['Close'])
     xgb_pred = xgb_model.predict(test[['Lag_1']])
@@ -79,32 +76,10 @@ for stock in stock_list:
     rf_pred = rf_model.predict(test[['Lag_1']])
     future_rf = [rf_model.predict([[df['Lag_1'].iloc[-1]]])[0] for _ in range(forecast_days)]
 
-    # Risk metrics
-    daily_returns = df['Close'].pct_change().dropna()
-    avg_return = np.mean(daily_returns) * 252
-    volatility = np.std(daily_returns) * np.sqrt(252)
-    sharpe_ratio = (avg_return - RISK_FREE_RATE) / volatility if volatility > 0 else 0
-    volatility_level = "Low" if volatility < 0.15 else "Medium" if volatility < 0.3 else "High"
-
-    returns[stock] = avg_return
-    volatilities[stock] = volatility
-    sharpe_ratios[stock] = sharpe_ratio
-    risk_levels[stock] = volatility_level
-
-    if mode == "Stock":
-        last_eps = df['Close'].iloc[-1] / 15
-        projected_eps = last_eps * (1 + avg_return)
-        fair_values[stock] = projected_eps * 15
-    else:
-        fair_values[stock] = np.nan
-
-    latest_price = df['Close'].iloc[-1]
-    xgb_forecast_price = future_xgb[-1]
-    expected_growth = ((xgb_forecast_price - latest_price) / latest_price) * 100
-    expected_price_growths[stock] = expected_growth
-
+    # Store results
     xgb_forecasts[stock] = xgb_pred[-1]
     rf_forecasts[stock] = rf_pred[-1]
+    volatilities[stock] = float(np.std(df['Close'].pct_change().dropna()))
     forecasted_prices[stock] = {'XGBoost': future_xgb[-1], 'RandomForest': future_rf[-1]}
     actual_vs_predicted[stock] = (test['Close'], xgb_pred, rf_pred)
 
@@ -116,50 +91,32 @@ for stock in stock_list:
     plt.plot(df['MA_200'], label="200-Day MA", linestyle='--', color='purple')
     plt.plot(future_dates, future_xgb, label="XGBoost Forecast", linestyle='--', color='red')
     plt.plot(future_dates, future_rf, label="RF Forecast", linestyle='--', color='green')
-    plt.title(f"{stock} - Forecasted Price")
-    plt.xlabel("Date")
-    plt.ylabel("Price")
     plt.legend()
+    plt.title(f"{stock} Price Forecast with MAs")
     st.pyplot(plt.gcf())
     plt.close()
 
-# Outputs
-st.subheader("🔮 Forecasted Prices")
-st.dataframe(pd.DataFrame.from_dict(forecasted_prices, orient='index').style.format("{:.2f}"))
+# Classify risk levels
+low_risk = []
+medium_risk = []
+high_risk = []
 
-st.subheader("📈 AI Trend Signals")
-st.dataframe(pd.DataFrame.from_dict(trend_signals, orient='index', columns=['Trend Signal']))
+for stock, vol in volatilities.items():
+    if vol <= 0.01:
+        low_risk.append(stock)
+    elif vol <= 0.03:
+        medium_risk.append(stock)
+    else:
+        high_risk.append(stock)
 
-st.subheader("📊 Risk & Return Metrics")
-rr_df = pd.DataFrame({
-    "Expected Annual Return": returns,
-    "Volatility": volatilities,
-    "Risk Level": risk_levels,
-    "Sharpe Ratio": sharpe_ratios
-})
-st.dataframe(rr_df.style.format("{:.2f}"))
-
-st.subheader("💸 Fair Value Estimate")
-fair_df = pd.DataFrame.from_dict(fair_values, orient='index', columns=["Estimated Fair Value"])
-st.dataframe(fair_df.style.format("{:.2f}"))
-
-st.subheader("📈 Forecasted Price Growth (%)")
-growth_df = pd.DataFrame.from_dict(expected_price_growths, orient='index', columns=["Forecasted Growth % (XGBoost)"])
-st.dataframe(growth_df.style.format("{:.2f}"))
-
-# Risk classification
-low_risk = [s for s, v in volatilities.items() if v <= 0.01]
-medium_risk = [s for s, v in volatilities.items() if 0.01 < v <= 0.03]
-high_risk = [s for s, v in volatilities.items() if v > 0.03]
-
-st.subheader("🔍 Stock Risk Classification")
+st.subheader("\U0001F50D Stock Risk Classification")
 risk_classification_df = pd.DataFrame({
     "Stock": low_risk + medium_risk + high_risk,
     "Risk Category": (["Low"] * len(low_risk)) + (["Medium"] * len(medium_risk)) + (["High"] * len(high_risk))
 })
 st.dataframe(risk_classification_df)
 
-st.subheader("💸 Portfolio Allocation Based on Risk")
+st.subheader("\U0001F4B8 Portfolio Allocation Based on Risk")
 
 allocation = {}
 
@@ -177,7 +134,7 @@ elif len(high_risk) == len(volatilities):
     for stock in high_risk:
         allocation[stock] = per_stock
 else:
-    risk_allocation = {1: 0.7, 2: 0.5, 3: 0.3}
+    risk_allocation = {1: 0.3, 2: 0.5, 3: 0.7}
     risky_allocation = investment * risk_allocation[risk_level]
     safe_allocation = investment - risky_allocation
 
@@ -193,14 +150,49 @@ else:
         per_safe_stock = safe_allocation / len(safe_stocks)
         for stock in safe_stocks:
             allocation[stock] = per_safe_stock
-            
-# Display Allocation
+
+# Calculate total allocation and percentage
 total_allocation = sum(allocation.values())
 alloc_percent = {stock: round((amount / total_allocation) * 100, 2) for stock, amount in allocation.items()}
 
-alloc_df = pd.DataFrame({
-    "Stock": allocation.keys(),
-    "INR Allocation": allocation.values(),
-    "Allocation %": alloc_percent.values()
-})
-st.dataframe(alloc_df.style.format({"INR Allocation": "₹{:.2f}", "Allocation %": "{:.2f}%"}))
+# Display Allocation
+st.subheader("\U0001F4B0 Optimized Stock Allocation (100% Distributed)")
+alloc_df = pd.DataFrame.from_dict(allocation, orient='index', columns=['Investment Amount (₹)'])
+alloc_df['Percentage Allocation (%)'] = alloc_df.index.map(lambda s: alloc_percent[s])
+st.dataframe(alloc_df)
+
+# Trend Signals
+st.subheader("\U0001F4E2 AI Trend Predictions")
+trend_df = pd.DataFrame.from_dict(trend_signals, orient='index', columns=['Trend Signal'])
+st.dataframe(trend_df)
+
+# Forecast Table
+st.subheader("🧐 Forecasted Prices (Last Prediction)")
+forecast_df = pd.DataFrame.from_dict(forecasted_prices, orient='index')
+st.dataframe(forecast_df)
+
+# Risk Levels
+st.subheader("⚠️ Risk Levels in Investment")
+risk_tiers = {s: "3 (High Risk)" if vol > 0.03 else "2 (Medium Risk)" if vol > 0.01 else "1 (Low Risk)" for s, vol in volatilities.items()}
+risk_df = pd.DataFrame.from_dict(risk_tiers, orient='index', columns=['Risk Level'])
+st.dataframe(risk_df)
+
+# RSI Table
+st.subheader("\U0001F4C8 RSI Indicator (Last Value)")
+rsi_df = pd.DataFrame.from_dict(rsi_signals, orient='index', columns=['RSI Signal'])
+st.dataframe(rsi_df)
+
+# Sharpe Ratio & Returns
+st.subheader("\U0001F4C9 Sharpe Ratio & Return Forecast")
+sharpe_rows = []
+risk_free_rate = 0.05
+for stock in stock_list:
+    df = yf.download(stock, period=f"{years}y", interval="1d", auto_adjust=True)
+    df['Returns'] = df['Close'].pct_change()
+    annual_return = df['Returns'].mean() * 252
+    annual_volatility = df['Returns'].std() * np.sqrt(252)
+    sharpe = (annual_return - risk_free_rate) / annual_volatility
+    sharpe_rows.append([stock, round(annual_return, 4), round(annual_volatility, 4), round(sharpe, 4)])
+
+sharpe_df = pd.DataFrame(sharpe_rows, columns=['Stock', 'Annual Return', 'Annual Volatility', 'Sharpe Ratio'])
+st.dataframe(sharpe_df.set_index('Stock'))
